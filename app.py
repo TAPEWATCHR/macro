@@ -5,6 +5,8 @@ import pandas_datareader.data as web
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import feedparser # [추가됨] 뉴스 RSS 파싱용 라이브러리
+from email.utils import parsedate_to_datetime # 날짜 변환용
 
 # --- 1. 페이지 및 테마 설정 ---
 st.set_page_config(layout="wide", page_title="Global Macro & Liquidity Terminal", page_icon="🌊")
@@ -16,16 +18,28 @@ st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
     .stApp {{ background-color: {BG_COLOR} !important; font-family: 'Inter', sans-serif; }}
-    h1, h2, h3, h4, h5, h6, p, label, span {{ color: #ccd6f6 !important; }}
+    
+    h1, h2, h3, h4, h5, h6, p, label, span, li, div {{ color: #ffffff !important; }}
+    
     .metric-card {{ background-color: {TABLE_BG_COLOR}; border-radius: 12px; padding: 20px; border: 1px solid #4a5161; text-align: center; height: 100%; }}
-    .metric-label {{ color: #aeb9cc !important; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }}
+    .metric-label {{ color: #f8f9fa !important; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }}
     .metric-value {{ font-size: 1.8rem; font-weight: 800; color: #64ffda !important; }}
     .metric-diff {{ font-size: 1rem; font-weight: 600; }}
     .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 20px; font-weight: 800; font-size: 1.2rem; margin-bottom: 20px; }}
     .risk-on {{ background-color: rgba(100, 255, 218, 0.2); color: #64ffda !important; border: 1px solid #64ffda; }}
     .risk-off {{ background-color: rgba(255, 107, 107, 0.2); color: #ff6b6b !important; border: 1px solid #ff6b6b; }}
     .neutral {{ background-color: rgba(254, 202, 87, 0.2); color: #feca57 !important; border: 1px solid #feca57; }}
-    .info-box {{ background-color: rgba(255, 255, 255, 0.05); border-left: 4px solid #8892b0; padding: 10px 15px; border-radius: 4px; font-size: 0.9rem; margin-bottom: 15px; }}
+    
+    .info-box {{ background-color: rgba(255, 255, 255, 0.1); border-left: 4px solid #ffffff; padding: 10px 15px; border-radius: 4px; font-size: 0.9rem; margin-bottom: 15px; color: #ffffff !important; }}
+    .info-box b {{ color: #64ffda !important; }}
+    
+    /* 뉴스 카드 스타일 */
+    .news-card {{ background-color: {TABLE_BG_COLOR}; border-left: 4px solid #a29bfe; padding: 15px; border-radius: 6px; margin-bottom: 12px; transition: 0.3s; }}
+    .news-card:hover {{ background-color: #4a5161; }}
+    .news-title {{ font-size: 1.1rem; font-weight: 600; margin-bottom: 5px; }}
+    .news-title a {{ color: #ffffff !important; text-decoration: none; }}
+    .news-title a:hover {{ color: #64ffda !important; }}
+    .news-meta {{ font-size: 0.8rem; color: #aeb9cc !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -50,12 +64,36 @@ def get_macro_data():
     
     return df
 
-# 차트 배경을 투명하고 다크 테마에 맞게 만들어주는 헬퍼 함수
+# [새로 추가됨] 구글 뉴스 RSS 실시간 파싱 함수
+@st.cache_data(ttl=3600) # 뉴스는 1시간마다 새로고침
+def get_macro_news():
+    # '연준 OR 금리 OR 인플레이션 OR 거시경제' 키워드로 최근 1일간의 한국어 뉴스 검색
+    url = 'https://news.google.com/rss/search?q=연준+OR+금리+OR+인플레이션+OR+거시경제+when:1d&hl=ko&gl=KR&ceid=KR:ko'
+    feed = feedparser.parse(url)
+    news_items = []
+    
+    for entry in feed.entries[:8]: # 최신 뉴스 8개만 가져오기
+        try:
+            # 시간 포맷을 예쁘게 변경
+            dt = parsedate_to_datetime(entry.published)
+            time_str = dt.strftime("%Y-%m-%d %H:%M")
+        except:
+            time_str = entry.published
+            
+        news_items.append({
+            'title': entry.title,
+            'link': entry.link,
+            'published': time_str,
+            'source': entry.source.title if hasattr(entry, 'source') else "Google News"
+        })
+    return news_items
+
 def get_transparent_layout():
     return dict(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#ffffff"), 
         margin=dict(l=20, r=20, t=40, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
@@ -80,7 +118,7 @@ df = get_macro_data()
 
 if not df.empty:
     latest_date = df.index[-1].strftime("%Y-%m-%d")
-    st.markdown(f"<p style='color: #8892b0;'>마지막 업데이트: {latest_date}</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='color: #ffffff;'>마지막 업데이트: {latest_date}</p>", unsafe_allow_html=True)
     
     regime_text, badge_class = analyze_regime(df)
     st.markdown(f"<div class='status-badge {badge_class}'>현재 매크로 환경: {regime_text}</div>", unsafe_allow_html=True)
@@ -128,7 +166,6 @@ if not df.empty:
         
         fig_dxy = px.line(df, y=['DXY', 'DXY_50MA'], color_discrete_sequence=["#ff6b6b", "#8892b0"])
         fig_dxy.update_layout(**get_transparent_layout(), xaxis_title="", yaxis_title="Index Value")
-        # 선 이름 변경
         fig_dxy.data[0].name = "달러 인덱스"
         fig_dxy.data[1].name = "50일 평균선"
         st.plotly_chart(fig_dxy, use_container_width=True)
@@ -161,15 +198,33 @@ if not df.empty:
 
     st.divider()
 
-    # --- 유동성 프록시 자산 비교 (Plotly) ---
-    st.markdown("### 🚀 유동성 민감 자산 흐름 (S&P 500 vs Bitcoin)")
-    st.markdown("""<div class='info-box'><b>💡 읽는 법:</b> 비트코인은 유동성에 가장 민감한 자산입니다. S&P 500보다 비트코인이 먼저 치고 올라가면, 조만간 주식 시장에도 유동성 파티가 올 확률이 높습니다. (비교를 위해 시작점을 100으로 맞춤)</div>""", unsafe_allow_html=True)
+    # --- 하단 레이아웃 분할: 프록시 차트 & 실시간 뉴스 ---
+    col_bottom1, col_bottom2 = st.columns([1.2, 1])
     
-    df_normalized = df[['S&P500', 'Bitcoin']] / df[['S&P500', 'Bitcoin']].iloc[0] * 100
-    
-    fig_proxy = px.line(df_normalized, y=['S&P500', 'Bitcoin'], color_discrete_sequence=["#00b894", "#fdcb6e"])
-    fig_proxy.update_layout(**get_transparent_layout(), xaxis_title="", yaxis_title="Normalized Value (Base=100)")
-    st.plotly_chart(fig_proxy, use_container_width=True)
+    with col_bottom1:
+        st.markdown("### 🚀 유동성 민감 자산 흐름")
+        st.markdown("""<div class='info-box'><b>💡 S&P 500 vs Bitcoin:</b> 비트코인은 유동성에 가장 먼저 반응합니다. (비교를 위해 시작점을 100으로 정규화)</div>""", unsafe_allow_html=True)
+        
+        df_normalized = df[['S&P500', 'Bitcoin']] / df[['S&P500', 'Bitcoin']].iloc[0] * 100
+        
+        fig_proxy = px.line(df_normalized, y=['S&P500', 'Bitcoin'], color_discrete_sequence=["#00b894", "#fdcb6e"])
+        fig_proxy.update_layout(**get_transparent_layout(), xaxis_title="", yaxis_title="Normalized Value (Base=100)")
+        st.plotly_chart(fig_proxy, use_container_width=True)
+
+    with col_bottom2:
+        st.markdown("### 📰 실시간 매크로 뉴스 (최근 24시간)")
+        news_data = get_macro_news()
+        
+        if news_data:
+            for news in news_data:
+                st.markdown(f"""
+                <div class="news-card">
+                    <div class="news-title"><a href="{news['link']}" target="_blank">{news['title']}</a></div>
+                    <div class="news-meta">🕒 {news['published']} | 🗞️ {news['source']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("현재 수집된 매크로 뉴스가 없습니다.")
 
 else:
     st.error("데이터를 불러오는 중 문제가 발생했습니다. FRED 또는 Yahoo Finance API 상태를 확인해 주세요.")
