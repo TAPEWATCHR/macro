@@ -4,3 +4,4 @@ yfinance
 pandas-datareader
 setuptools
 plotly
+feedparser
